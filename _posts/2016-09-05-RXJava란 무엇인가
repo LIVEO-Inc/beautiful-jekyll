@@ -1,0 +1,311 @@
+---
+layout: post
+title: 안드로이드 Reactive Programming
+subtitle: RxJava를 이용한 Reactive Programming
+---
+
+why? 왜 어째서 사용 하는가 ?
+
+1.plain old java concurrent programming
+동시성 프로그래밍을 위한 기존의 스레드에는 불편함이 있다.
+기존의 코드 중 비트맵을 다운 받는 예)
+
+```java
+new Thread{
+  @Override
+    public void run(){
+      /To-do
+      URL url = new URL(strUrl);
+      HttpURLConnection urlConnetction = ...(생략);
+      urlConnetction.connet();
+      iStream = urlConnection.getInputStream();
+      bitmap = BitmapFactory.decodeStream(iStream);
+
+      /*비트맵을 보여줘야 하기 때문에 ui조정이 필요하다 따라서
+      핸들러를 사용하거나 runOnUiThread를 사용 해야 한다.
+      runOnUiThread(new Runnable()){
+          @Override public void run(){
+            imageView.setImageBitmap(bitmap);
+          }
+      }
+    }
+}
+```
+
+/*하지만 다운로드 받는 도중에 예외처리가 일어날수 있다 그러므로 try-catch사용
+그리고 다운로드가 실패했을때 다운로드가 실패한것을 보여주기위한 메소드*/
+
+new Thread{
+  @Override
+    public void run(){
+      /To-do
+      try {
+      URL url = new URL(strUrl);
+      HttpURLConnection urlConnetction = ...(생략);
+      urlConnetction.connet();
+      iStream = urlConnection.getInputStream();
+      bitmap = BitmapFactory.decodeStream(iStream);
+      } catch(Exception e) {
+          log(e.toString);
+
+          runOnUiThread(new Runnable(){
+               showToas("다운로드 실패");
+              });
+      }
+      runOnUiThread(new Runnable(){
+          @Override public void run(){
+            imageView.setImageBitmap(bitmap);
+          });
+      }
+    }
+}
+
+//코드가 약간 복잡해졌네요 ?
+
+/*저장소가 부족할수도 있고 인터넷이 안될수도 있고 인터넷이 연결되는데 어떠한 문제로 인해
+실패할수도 있습니다 이로 인해 try catch문이 복잡해지고 가독성이 현저히 떨어지게 됩니다*/
+
+//리팩토링을 했지만 이 메소드가 어떤 스레드에서 도는지 애매해진다.
+Bitmap downloadUrl(String strUrl){
+    try {
+        iStream = getInputStream(strUrl);
+    } catch (Exceoption e) {
+        handleExceoption(e, ()-> {"다운로드 실패"});
+    } fianlly {
+        close(iStream);
+    }
+    return BitmapFactory.decodeStream(iStream);
+}
+
+private void handleExeption(Exception e,OnError onError){
+          ..생략
+}
+
+/////////////////////////////////////////////////////////////////////////////////
+
+Bitmap downloadUrl(String strUrl){
+    ...생략
+}
+
+//1번
+void handleExeption(Exception e,OnError onError){
+    Lod.d(onError.call());
+}
+
+//2번 에러를 메인 스레드에서 처리해서 다소 유연해보이지 않을수 있다.
+void handleExeption(Exception e,OnError onError){
+    runOnUiThread(new Runnable(){
+        void run(){
+          Lod.d(onError.call());
+        }
+      }
+    )
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+
+//하지만 뷰를 조작 하는 코드가 있을 경우에는 1번은 에러가 나고 2번은 정상 작동 한다.
+//뷰를 그리는데 뷰의 상태가 바뀌기 때문에 오류
+Bitmap downloadUrl(String strUrl){
+        handleExceoption(e, ()-> {
+          Toas.makeText(getActiity(), ()-> {
+            textView.setText("다운로드 실패")
+          })
+        });
+}
+
+//1번 -> calledFromWrongThreadException
+void handleExeption(Exception e,OnError onError){
+    Lod.d(onError.call());
+}
+
+//2번
+void handleExeption(Exception e,OnError onError){
+    runOnUiThread(new Runnable(){
+        void run(){
+          Lod.d(onError.call());
+        }
+      }
+    )
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+//그래서 모든 스레드에 어디서 작동하는지 써주곤 했다
+
+//1번 -> calledFromWrongThreadException
+void handleExeptionOnUiThread(Exception e,OnError onError){
+    Lod.d(onError.call());
+}
+
+//2번
+void handleExeptionOnBgThread(Exception e,OnError onError){
+    runOnUiThread(new Runnable(){
+        void run(){
+          Lod.d(onError.call());
+        }
+    }
+}
+
+
+
+2.생명주기와 동시성 프로그래밍
+//기존의 AsyncTask는 많은 성능저하를 가지고 온다 + memory leak 주의가 필요하다
+//집중코딩이 필요하나 집중력이 계속 유지되지 않으므로 아예 쓰지 않는 것이 좋다
+
+MyThread extends Thread{
+  interface MyCallback{
+    void onFinishDownloadImage(T t);
+    void onError(Exception e);
+  }
+
+  MyCallback callback;
+
+  @Override
+  public void run(){
+    try {
+      //download image
+    } catch {
+        callback.onError(e);
+    }
+      runOnUiThread(new Runnable(){
+        @override
+        public void run(){
+          callback.onFinishDownloadImage(bitmap);
+        }
+      });
+  }
+}
+
+//concurrent package - 안드로이드 프레임워크 내에서도 많이 사용할 만큼 꼭 한번 사용해보길 권장
+//handler - 안드로이드의 기본적인 동시성 프레임워크인 핸들러는 기본적으로 uiThread를 관리한다
+특징으로는 루퍼와 함께 사용되며 루퍼는 메세지 큐를 가지고 있기 때문에 호출되는 순서로 실행된다.
+syncronize같은 저수준 키워드를 이용해서 critical section을 관리할 필요가 없다.
+나쁘지 않은 방법
+//asyncTask의 단점을 뽑아보자면
+
+@Override
+protected void onPreExecute(){
+  progressBar.setVisibility(View.VISIBLE);
+}
+
+과
+
+@Override
+protected void onPostExecute{Bitmap bitmap}{
+  imageView.setImageBitmap(bitmap);
+  progressBar.setVisibility(View.GONE);
+}
+는 메인스레드에서 호출되지만
+
+@Override
+proteted Bitmap doInBackground(String... params) {
+  try {
+      bitmap = downloadBitmap(params);
+  } catch (Exception e) { ... }
+  return bitmap;
+}
+doInBackground는 백그라운드에서 호출되는데 만약 예외가 발생했다면 ui에 통지할 방법이 없다.
+만약 핸들러나 액티비티를 참조하게 되면 메모리의 누수가 발생한다. 추천x
+
+//Service 액티비티와 디커플링이 가능하여 다운로드를 하는도중 액티비티의 라이프사이클이 종료를해도
+서비스에서 정상적으로 종료가 가능하다.
+
+//AsyncQueryHandler 추천 x
+
+//Loader 액티비티라이플사이클을 관리해주기 때문에 편리할수 있으나 Content proider에 한정. db전용
+
+//동시성 관련 라이브러리
+
+// volley
+
+//okhttp retrofit(rxjava 의 obserberable 을 사용 하고 있다) picasso
+
+//멀티태스크의 종류는 sequencial tasks, parallel tasks로 크게 나눠 생각해 볼수 있다.
+
+sequencial 예) 로그인 시나리오 auth->token->login->result->request->image 등
+
+parallel tasks 예) 소셜 공유 시나리오 사진을 페북 트위터 라인 g메일 등에 공유하는 경우
+
+
+
+이런거 없을까?
+어떤 데이터가 있는데 -> Observable
+어떤 쓰레드 에서 수행하고 -> subscribeOn(background)
+필요한 데이터만 걸러내고 -> filter(paidUser())
+데이터를 어떻게 변환하고 -> map(StringToJson())
+오류 발생시에는 어떻게 대응할지 -> doOnError(handleError())
+어떤 쓰레드에서 결과를 받을지, -> observeOn(mainTread)
+시작하면, -> subscribe()->subscription
+필요한 경우 취소 할수 있어야 한다. subscription.unsubscribe()
+테스트도 쉬워야겠고! assert(paiduser()), assert(stringToJson())
+유추 가능한 것은 생략 할수 있으면 좋겠다.
+
+그래서 나온 Rxjava 란?
+
+로직에만 집중 할수 있다.
+테스트 용이성
+가독성
+이름짓기?
+
+알아야할것
+람다표현식
+
+Runnable task = new Runnable(){
+   @Override
+   public void run(){
+      system.out.println("Hello Lamda");
+   }
+};
+
+=>
+
+Runnable task2 = () -> {System.out.println("Hello Lamda");};
+
+안드로이드 레트로 람다
+
+1.RxJava란?
+간단하게 말하면 각 항목에 변화가 있으면 자동으로 감지하여 값을 갱신해준다 예)엑셀차트
+
+Observable -> 관측 가능한 값의 흐름을 나타내는 객체 (생산자) 버튼 클릭
+subscribe 함수를 통해 구독이 가능하며 , 구독자에게 값의 흐름을 알려준다.
+
+Observer - > 값의 흐름을 받는 객체 (소비자) 텍스트뷰
+Observable 값의 흐름에 따라 onNext, onError, onCompelete를 호출 받는다.
+
+
+
+Observable -> eventSource.subscribe((event)->{
+   //some action. -> Observer
+});
+
+Schdulers.computation() //연산에 특화
+
+Schdulers.io //io처리를 담당하는 thread 들의 pool로 구성된 Schdulers
+필요에 따라 자동으로 pool의 크기를 늘리거나 줄인다.
+
+Schdulers.newThread() //새로운 쓰레드를 만드는 Schdulers
+
+AndroidSchdulers.mainThread() -> android의 mainTHREAD에서 작업을 수행한다
+
+COMBINElATEST -> OBSERVABLE들의 중 최신의 값을 사용한다.
+최신의 값을 원하지 않으면 merge
+
+
+예)
+final PublicSubject<String> inputText = publishSubject.create();
+TextView autoCompleteTextView = (TextView)findViewById(R.id.auto_complete_text);
+
+// 1초 동안 사용자 입력이 없는 경우 네트워크에서 값을 받아와서 갱신
+1초동안 입력이 없는 경우 작업을 시작 하게 되고
+io thread에서 observeOn함수를 통해 처리하는데
+flatamp 을 통해 인터넷에서 비동기로 다운을 받아 다받아지면
+메인 스레드에서 구독을하고
+subscibe 에서 view에 없데이트 해준다.
+
+inputText.throttleWithTimeout(1,TimeUnit.SECONDS)
+   .observerOn(Schdulers.io())
+   .flatMap(new GetAutocompleteKwyswordsFromNetwork())
+   .observeOn(AndroidSchdulers.mainThread())
+   .subscribe(new SetTextAciton(autoCompleteTextView));
+
+Subject (Obsevable + Observer)
